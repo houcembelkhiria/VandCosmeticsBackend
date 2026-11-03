@@ -21,3 +21,8 @@ ALTER TABLE auditflow_events ENABLE ROW LEVEL SECURITY;
 
 CREATE INDEX IF NOT EXISTS idx_products_auditflow_id ON products(auditflow_id);
 CREATE INDEX IF NOT EXISTS idx_orders_auditflow_order_id ON orders(auditflow_order_id);
+
+-- Droit de timbre fiscal affiché au checkout (TND), lu par le frontend. 0 pour le masquer.
+INSERT INTO parametres (key, value, description, type)
+VALUES ('timbre_fiscal', '1.00', 'Droit de timbre fiscal ajouté à chaque facture (TND)', 'decimal')
+ON CONFLICT (key) DO NOTHING;
