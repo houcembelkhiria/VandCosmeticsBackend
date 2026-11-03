@@ -27,9 +27,9 @@ Variants: a Vanda variant `id` is the AuditFlow **SKU**, so the cart's existing 
 
 ## Cut-over plan (production)
 1. Provision the AuditFlow instance (`ops/provision.ts vanda` in auditflow-app) and check `ops/fleet.ts status`.
-2. Back up Vanda's database (the `ecommerce_ecom-db-data` volume is **not** in the VPS backup script yet: add it first, and test a restore).
+2. Back up Vanda's database. Its volumes (`ecommerce_ecom-db-data`, `ecommerce_ecom-storage-data`) are **not** in the VPS backup job: run `ops/scripts/backup-client.sh vanda-shop` with the Supabase settings from `ops/README.md` (tested against the Supabase image), schedule it, add the folder to the off-site sync, and run `restore-test.sh` before continuing.
 3. Run `add-auditflow-columns.sql` on Vanda's database.
-4. Enter the catalogue and opening stock in AuditFlow (there is no import tool yet), publish the products on the `web` channel.
+4. Load the catalogue and opening stock into AuditFlow with the importer (`docs/CATALOG_IMPORT.md` in auditflow-app: JSON or CSV, images, stock receipt, `--publish web`), from the client's real product file. **Do not import `packs/demo/` into a live shop**: it holds real products from Open Beauty Facts with invented prices and stock, for demos only.
 5. In AuditFlow: create a **secret** key (catalog:read, stock:read, orders:read, orders:write) and a webhook to `https://<vanda backend>/api/webhooks/auditflow`; note both secrets in Notion.
 6. Put the three `AUDITFLOW_*` variables in `ecommerce-deploy/backend.env`, redeploy the backend, run `npm run sync:auditflow` once, compare the shop with AuditFlow.
 7. Place a test order end to end (COD), confirm and ship it in AuditFlow, watch the status follow.
@@ -38,7 +38,7 @@ Variants: a Vanda variant `id` is the AuditFlow **SKU**, so the cart's existing 
 
 ## Things to know
 - `orders.total` has 2 decimals, AuditFlow works in 3 (dinars): the exact amount charged is stored in `orders.auditflow_total`; `total` is the rounded value.
-- AuditFlow adds the 1.000 TND **timbre fiscal** to a consumer invoice. Vanda's checkout does not show it, so the customer pays 1 TND more than the cart total unless the frontend is changed to include it (decision pending).
+- AuditFlow adds the 1.000 TND **timbre fiscal** to a consumer invoice. The frontend branch `feat/timbre-fiscal` shows it in the checkout total (parameter `timbre_fiscal`, default 1.00, 0 hides it; the SQL file inserts it). **Deploy the frontend change together with enabling the integration**, otherwise customers are charged 1 TND more than they saw.
 - The delivery fee is converted from TTC to HT before sending so AuditFlow's total matches (`AUDITFLOW_SHIPPING_FEE_INCLUDES_VAT`).
 - The repo's `supabase-schema.sql` declares only `products.category_id` while the controllers read/write a text `category` column; the sync writes both (`category_id` when a `categories` row can be made).
 - Products created by hand in Vanda (no `auditflow_id`) are never touched by the sync, but cannot be ordered while the integration is on.
