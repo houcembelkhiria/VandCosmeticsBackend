@@ -6,11 +6,23 @@ const COLS = 'id, auditflow_id, auditflow_sku, title, slug, description, price, 
 
 export class SupabaseStore implements VandaStore {
   private categoryIds = new Map<string, string | null>();
+  /** Some deployments only have products.category_id (no text `category` column). Probed once. */
+  private categoryColumn: boolean | null = null;
+
+  private async hasCategoryColumn(): Promise<boolean> {
+    if (this.categoryColumn === null) {
+      const { error } = await supabaseAdmin.from('products').select('category').limit(1);
+      if (error && error.code !== '42703') throw error;
+      this.categoryColumn = !error;
+    }
+    return this.categoryColumn;
+  }
 
   async listManaged(): Promise<ManagedProduct[]> {
-    const { data, error } = await supabaseAdmin.from('products').select(COLS).not('auditflow_id', 'is', null);
+    const cols = (await this.hasCategoryColumn()) ? COLS : COLS.replace(' category,', '');
+    const { data, error } = await supabaseAdmin.from('products').select(cols).not('auditflow_id', 'is', null);
     if (error) throw error;
-    return (data ?? []) as ManagedProduct[];
+    return (data ?? []) as unknown as ManagedProduct[];
   }
 
   /** categories.name -> id, creating it on first use. Null when the categories table is not there. */
@@ -39,7 +51,9 @@ export class SupabaseStore implements VandaStore {
 
   async upsertProduct(row: VandaProductRow, existing: ManagedProduct | undefined) {
     if (existing) {
-      const unchanged = productUnchanged(existing, row);
+      // Without the text column there is nothing to compare for the category.
+      const stored = (await this.hasCategoryColumn()) ? existing : { ...existing, category: row.category };
+      const unchanged = productUnchanged(stored, row);
       if (unchanged) return 'unchanged' as const;
       const { error } = await supabaseAdmin.from('products').update(await this.withCategory(row)).eq('id', existing.id);
       if (error) throw error;
@@ -57,7 +71,9 @@ export class SupabaseStore implements VandaStore {
 
   private async withCategory(row: VandaProductRow) {
     const category_id = await this.categoryId(row.category);
-    return { ...row, ...(category_id ? { category_id } : {}), updated_at: new Date().toISOString() };
+    const { category, ...withoutCategory } = row;
+    const base = (await this.hasCategoryColumn()) ? { ...withoutCategory, category } : withoutCategory;
+    return { ...base, ...(category_id ? { category_id } : {}), updated_at: new Date().toISOString() };
   }
 
   async deleteManaged(auditflowIds: string[]): Promise<number> {
