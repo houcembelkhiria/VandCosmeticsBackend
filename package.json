@@ -7,10 +7,17 @@
     "dev": "nodemon",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "jest",
-    "seed": "node insert-test-products.js"
+    "test": "vitest run",
+    "seed": "node insert-test-products.js",
+    "sync:auditflow": "ts-node src/scripts/syncAuditflow.ts"
   },
-  "keywords": ["ecommerce", "cosmetics", "api", "express", "supabase"],
+  "keywords": [
+    "ecommerce",
+    "cosmetics",
+    "api",
+    "express",
+    "supabase"
+  ],
   "author": "Vanda Team",
   "license": "MIT",
   "dependencies": {
@@ -46,6 +53,7 @@
     "@types/node": "^20.10.5",
     "typescript": "^5.3.3",
     "nodemon": "^3.0.2",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "vitest": "^4.1.11"
   }
 }

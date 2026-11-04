@@ -15,6 +15,9 @@ import categoryRoutes from './routes/categories';
 import orderRoutes from './routes/orders';
 import cartRoutes from './routes/cart';
 import parameterRoutes from './routes/parameters';
+import auditflowRoutes from './routes/auditflow';
+import { getAuditflow, startReconcile } from './integrations/auditflow';
+import { createWebhookHandler } from './integrations/auditflow/webhook';
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -36,12 +39,21 @@ app.use(helmet({
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+  message: 'Too many requests from this IP, please try again later.',
+  // AuditFlow webhooks come from one address in bursts and are authenticated by signature.
+  skip: (req) => req.path === '/api/webhooks/auditflow'
 });
 app.use(limiter);
 
 // Logging
 app.use(morgan('combined'));
+
+// AuditFlow webhook: needs the raw body (the signature covers the exact bytes), so it is mounted
+// before the JSON parser. Inactive (503) unless AUDITFLOW_WEBHOOK_SECRET is set.
+const af = getAuditflow();
+if (af) {
+  app.post('/api/webhooks/auditflow', express.raw({ type: 'application/json', limit: '1mb' }), createWebhookHandler({ client: af.client, store: af.store, secret: af.config.webhookSecret }));
+}
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
@@ -59,6 +71,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/parameters', parameterRoutes);
+app.use('/api/admin/auditflow', auditflowRoutes);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -79,4 +92,6 @@ app.listen(PORT, () => {
   console.log(`🚀 Vanda backend running on port ${PORT}`);
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
+  console.log(`🔄 AuditFlow: ${af ? af.config.baseUrl : 'disabled'}`);
+  startReconcile();
 });

@@ -1,0 +1,31 @@
+# LOCAL DEVELOPMENT ONLY: a throwaway replica of Vanda's self-hosted Supabase (Postgres + PostgREST),
+# enough to run the backend and its AuditFlow integration end to end. The secrets below are public
+# dev values; never reuse them anywhere real.
+name: vanda-local
+services:
+  db:
+    image: supabase/postgres:17.6.1.136
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      POSTGRES_PASSWORD: devonly-local-password
+      POSTGRES_DB: postgres
+      JWT_EXP: "3600"
+    volumes:
+      - ./roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:Z
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal"]
+    ports: ["55329:5432"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+  rest:
+    image: postgrest/postgrest:v14.17
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      PGRST_DB_URI: postgres://authenticator:devonly-local-password@db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: devonly-jwt-secret-devonly-jwt-secret-1234
+    ports: ["55330:3000"]

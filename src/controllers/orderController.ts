@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { supabaseAdmin } from '../config/supabase';
+import { getAuditflow } from '../integrations/auditflow';
+import { OrderRejected, placeOrder as placeAuditflowOrder } from '../integrations/auditflow/orders';
 
 const generateOrderId = () => {
   const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
@@ -8,6 +10,29 @@ const generateOrderId = () => {
 };
 
 export const createOrder = async (req: any, res: Response) => {
+  // AuditFlow owns stock and the order pipeline when configured: reserve there first.
+  const af = getAuditflow();
+  if (af) {
+    try {
+      const d = req.body;
+      const { order } = await placeAuditflowOrder(af, {
+        userId: req.user?.id || null,
+        customerEmail: d.customerEmail,
+        customerName: d.customerName,
+        items: d.items,
+        shipping: d.shipping,
+        subtotal: d.subtotal,
+        discount: d.discount || 0,
+        total: d.total,
+      });
+      return res.status(201).json(order);
+    } catch (error) {
+      if (error instanceof OrderRejected) return res.status(error.status).json(error.body);
+      console.error('Create order (AuditFlow) error:', error);
+      return res.status(500).json({ error: 'Failed to create order' });
+    }
+  }
+
   try {
     const orderData = req.body;
     const orderId = generateOrderId();
@@ -203,6 +228,15 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
       throw fetchError;
     }
 
+    // Orders placed through AuditFlow follow its pipeline: Vanda only mirrors it, except a cancellation.
+    const af = getAuditflow();
+    if (af && currentOrder.auditflow_order_id) {
+      if (status !== 'cancelled') {
+        return res.status(409).json({ error: 'Le statut de cette commande est géré dans AuditFlow.', code: 'MANAGED_EXTERNALLY' });
+      }
+      await af.client.cancelOrder(currentOrder.auditflow_order_id, 'Annulée depuis le back-office Vanda');
+    }
+
     // Update the order status
     const { data: order, error } = await supabaseAdmin
       .from('orders')
@@ -222,7 +256,10 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
     const previousStatus = currentOrder.status;
     
     // If status changed to 'cancelled' and was not previously cancelled, restore stock
-    if (status === 'cancelled' && previousStatus !== 'cancelled') {
+    // (not when AuditFlow manages stock: it releases the reservation itself)
+    if (getAuditflow()) {
+      // nothing to adjust in Vanda
+    } else if (status === 'cancelled' && previousStatus !== 'cancelled') {
       console.log(`Restoring stock for cancelled order ${id}`);
       
       for (const item of currentOrder.items) {
@@ -360,8 +397,12 @@ export const deleteOrder = async (req: Request, res: Response) => {
       throw fetchError;
     }
 
-    // If order was not cancelled, restore stock before deleting
-    if (order.status !== 'cancelled') {
+    if (getAuditflow() && order.auditflow_order_id) {
+      return res.status(409).json({ error: 'Cette commande existe dans AuditFlow : annulez-la au lieu de la supprimer.', code: 'MANAGED_EXTERNALLY' });
+    }
+
+    // If order was not cancelled, restore stock before deleting (AuditFlow manages stock when configured)
+    if (order.status !== 'cancelled' && !getAuditflow()) {
       console.log(`Restoring stock for deleted order ${id}`);
       
       for (const item of order.items) {
